@@ -1,4 +1,12 @@
 {
   "editor.tabSize": 2,
-  "cSpell.words": ["signin"]
+  "cSpell.words": [
+    "GETTINGQUESTION",
+    "GETTINGUNANSWEREDQUESTIONS",
+    "GOTQUESTION",
+    "GOTUNANSWEREDQUESTIONS",
+    "SEARCHEDQUESTIONS",
+    "SEARCHINGQUESTIONS",
+    "signin"
+  ]
 }
