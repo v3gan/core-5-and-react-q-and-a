@@ -2,13 +2,6 @@
   "extends": ["react-app", "prettier"],
   "plugins": ["prettier"],
   "rules": {
-    "prettier/prettier": [
-      "error",
-      {
-        "endOfLine": "auto",
-        "singleQuote": true,
-        "parser": "flow"
-      }
-    ]
+    "prettier/prettier": "error"
   }
 }
