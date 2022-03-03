@@ -4,6 +4,9 @@ using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using QandA.Data.Models;
+using System.Linq;
+using static Dapper.SqlMapper;
+using System.Threading.Tasks;
 
 namespace QandA.Data
 {
@@ -45,25 +48,21 @@ namespace QandA.Data
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                var question =
-                connection.QueryFirstOrDefault<QuestionGetSingleResponse>(
-                    @"EXEC dbo.Question_GetSingle @QuestionId = @QuestionId",
-                    new { 
-                        QuestionId = questionId 
-                    }
-                );
-                if (question != null)
+                using (GridReader results = connection.QueryMultiple(
+                    @"EXEC dbo.Question_GetSingle
+                    @QuestionId = @QuestionId;
+                    EXEC dbo.Answer_Get_ByQuestionId
+                    @QuestionId = @QuestionId",
+                new { QuestionId = questionId }))
                 {
-                    question.Answers = 
-                        connection.Query<AnswerGetResponse>(
-                                @"EXEC dbo.Answer_Get_ByQuestionId @QuestionId = @QuestionId",
-                                new
-                                {
-                                    QuestionId = questionId
-                                }
-                            );
+                    var question = results.Read<QuestionGetSingleResponse>().FirstOrDefault();
+                    if (question != null)
+                    {
+                        question.Answers =
+                        results.Read<AnswerGetResponse>().ToList();
+                    }
+                    return question;
                 }
-                return question;
             }
         }
 
@@ -72,10 +71,32 @@ namespace QandA.Data
             using (var connection = new SqlConnection(_connectionString))
             {
                 connection.Open();
-                return connection.Query<QuestionGetManyResponse>(@"EXEC dob.Question_GetMany");
+                return connection.Query<QuestionGetManyResponse>(@"EXEC dbo.Question_GetMany");
             };
         }
 
+        public IEnumerable<QuestionGetManyResponse> GetQuestionsWithAnswers()
+        {
+            using var connection = new SqlConnection(_connectionString);
+            connection.Open();
+            var questionDictionary = new Dictionary<int, QuestionGetManyResponse>();
+            return connection.Query<QuestionGetManyResponse, AnswerGetResponse, QuestionGetManyResponse>
+                ("EXEC dbo.Question_GetMany_WithAnswers",
+                map: (q, a) =>
+                {
+                    QuestionGetManyResponse question;
+                    if (!questionDictionary.TryGetValue(q.QuestionId, out question))
+                    {
+                        question = q;
+                        question.Answers = new List<AnswerGetResponse>();
+                        questionDictionary.Add(question.QuestionId, question);
+                    }
+                    question.Answers.Add(a);
+                    return question;
+                }, splitOn: "QuestionId")
+                .Distinct()
+                .ToList();
+        }
         public IEnumerable<QuestionGetManyResponse> GetQuestionsBySearch(string search)
         {
             using (var connection = new SqlConnection(_connectionString))
@@ -85,6 +106,26 @@ namespace QandA.Data
                     @"EXEC dbo.Question_GetMany_BySearch @Search = @Search", new { 
                         Search = search 
                     });
+            }
+        }
+
+        public IEnumerable<QuestionGetManyResponse> GetQuestionsBySearchWithPaging(string search, int pageNumber, int pageSize)
+        {
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                connection.Open();
+                var parameters = new
+                {
+                    Search = search,
+                    PageNumber = pageNumber,
+                    PageSize = pageSize
+                };
+                return connection.Query<QuestionGetManyResponse>(
+                    @"EXEC dbo.Question_GetMany_BySearch_WithPaging
+                    @Search = @Search,
+                    @PageNumber = @PageNumber,
+                    @PageSize = @PageSize", parameters
+                );
             }
         }
 
@@ -99,7 +140,17 @@ namespace QandA.Data
             }
         }
 
-        public AnswerGetResponse PostAnswer(AnswerPostRequest answer)
+        public async Task<IEnumerable<QuestionGetManyResponse>>GetUnansweredQuestionsAsync()
+        {
+            using (var connection = new
+            SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+                return await connection.QueryAsync<QuestionGetManyResponse>("EXEC dbo.Question_GetUnanswered");
+            }
+        }
+
+        public AnswerGetResponse PostAnswer(AnswerPostFullRequest answer)
         {
             using (var connection = new SqlConnection(_connectionString))
             {
@@ -114,38 +165,33 @@ namespace QandA.Data
             }
         }
 
-        public QuestionGetSingleResponse PostQuestion(QuestionPostRequest question)
+        public QuestionGetSingleResponse PostQuestion(QuestionPostFullRequest question)
         {
-            using (var connection = new SqlConnection(_connectionString))
-            {
-                connection.Open();
-                var questionId = connection.QueryFirst<int>(@"EXEC dbo.Question_Post
+            using var connection = new SqlConnection(_connectionString);
+            connection.Open();
+            var questionId = connection.QueryFirst<int>(@"EXEC dbo.Question_Post
                     @Title = @Title, @Content = @Content,
                     @UserId = @UserId, @UserName = @UserName,
                     @Created = @Created", question);
-                return GetQuestion(questionId);
-            }
+            return GetQuestion(questionId);
         }
 
         public QuestionGetSingleResponse PutQuestion(int questionId, QuestionPutRequest question)
         {
-            using (var connection = new SqlConnection(_connectionString))
-            {
-                connection.Open();
-                connection.Execute(
-                @"EXEC dbo.Question_Put
-                Writing data using Dapper 267
+            using var connection = new SqlConnection(_connectionString);
+            connection.Open();
+            connection.Execute(
+            @"EXEC dbo.Question_Put
                 @QuestionId = @QuestionId, @Title = @Title,
                 @Content = @Content",
-                new
-                {
-                    QuestionId = questionId,
-                    question.Title,
-                    question.Content
-                }
-                );
-                return GetQuestion(questionId);
+            new
+            {
+                QuestionId = questionId,
+                question.Title,
+                question.Content
             }
+            );
+            return GetQuestion(questionId);
         }
 
         public bool QuestionExists(int questionId)
