@@ -13,6 +13,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using DbUp;
 using QandA.Data;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using QandA.Authorization;
+using Microsoft.AspNetCore.Authorization;
 
 namespace QandA
 {
@@ -29,7 +32,7 @@ namespace QandA
         public void ConfigureServices(IServiceCollection services)
         {
             var connectionString = Configuration.GetConnectionString("DefaultConnection");
-            
+
             EnsureDatabase.For.SqlDatabase(connectionString);
 
             var upgrader = DeployChanges.To.SqlDatabase(connectionString, null)
@@ -52,8 +55,25 @@ namespace QandA
             services.AddScoped<IDataRepository, DataRepository>();
             services.AddMemoryCache();
             services.AddSingleton<IQuestionCache, QuestionCache>();
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            }).AddJwtBearer(options =>
+            {
+                options.Authority = Configuration["Auth0:Authority"];
+                options.Audience = Configuration["Auth0:Audience"];
+            });
+            services.AddHttpClient();
+            services.AddAuthorization(options => options.AddPolicy("MustBeQuestionAuthor", policy => 
+                policy.Requirements.Add(new MustBeQuestionAuthorRequirement())));
+            services.AddScoped<IAuthorizationHandler, MustBeQuestionAuthorHandler>();
+            services.AddHttpContextAccessor();
+            services.AddCors(options => options.AddPolicy("CorsPolicy", builder => builder
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .WithOrigins(Configuration["Frontend"])));
         }
-
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
@@ -70,7 +90,8 @@ namespace QandA
             }
 
             app.UseRouting();
-
+            app.UseCors("CorsPolicy");
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
